@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,9 +21,15 @@ import (
 )
 
 type userHandlerRepoStub struct {
-	user       *service.User
-	identities []service.UserAuthIdentityRecord
-	unbound    []string
+	user           *service.User
+	identities     []service.UserAuthIdentityRecord
+	unbound        []string
+	checkinRecords map[string]*service.DailyCheckinRecord
+	checkinClaimed []float64
+}
+
+type userHandlerSettingRepoStub struct {
+	values map[string]string
 }
 
 func (s *userHandlerRepoStub) Create(context.Context, *service.User) error { return nil }
@@ -87,8 +94,12 @@ func (s *userHandlerRepoStub) ListWithFilters(context.Context, pagination.Pagina
 func (s *userHandlerRepoStub) UpdateBalance(context.Context, int64, float64) error { return nil }
 func (s *userHandlerRepoStub) DeductBalance(context.Context, int64, float64) error { return nil }
 func (s *userHandlerRepoStub) UpdateConcurrency(context.Context, int64, int) error { return nil }
-func (s *userHandlerRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
-func (s *userHandlerRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
+func (s *userHandlerRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
+	return 0, nil
+}
+func (s *userHandlerRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
+	return 0, nil
+}
 func (s *userHandlerRepoStub) ExistsByEmail(context.Context, string) (bool, error) { return false, nil }
 func (s *userHandlerRepoStub) RemoveGroupFromAllowedGroups(context.Context, int64) (int64, error) {
 	return 0, nil
@@ -119,6 +130,81 @@ func (s *userHandlerRepoStub) ListUserAuthIdentities(context.Context, int64) ([]
 	copy(out, s.identities)
 	return out, nil
 }
+
+func (s *userHandlerRepoStub) GetDailyCheckin(_ context.Context, userID int64, day time.Time) (*service.DailyCheckinRecord, error) {
+	if s.checkinRecords == nil {
+		return nil, nil
+	}
+	record := s.checkinRecords[dailyCheckinHandlerKey(userID, day)]
+	if record == nil {
+		return nil, nil
+	}
+	cloned := *record
+	return &cloned, nil
+}
+
+func (s *userHandlerRepoStub) ClaimDailyCheckin(_ context.Context, userID int64, day time.Time, reward float64) (*service.DailyCheckinRecord, bool, error) {
+	if s.checkinRecords == nil {
+		s.checkinRecords = make(map[string]*service.DailyCheckinRecord)
+	}
+	key := dailyCheckinHandlerKey(userID, day)
+	if s.checkinRecords[key] != nil {
+		record := *s.checkinRecords[key]
+		return &record, true, nil
+	}
+	if s.user == nil {
+		return nil, false, service.ErrUserNotFound
+	}
+	s.checkinClaimed = append(s.checkinClaimed, reward)
+	s.user.Balance += reward
+	record := &service.DailyCheckinRecord{
+		UserID:    userID,
+		Day:       day,
+		Reward:    reward,
+		Balance:   s.user.Balance,
+		ClaimedAt: time.Now().UTC(),
+	}
+	s.checkinRecords[key] = record
+	return record, false, nil
+}
+
+func dailyCheckinHandlerKey(userID int64, day time.Time) string {
+	return strconv.FormatInt(userID, 10) + ":" + day.Format("2006-01-02")
+}
+
+func (s *userHandlerSettingRepoStub) Get(context.Context, string) (*service.Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *userHandlerSettingRepoStub) GetValue(context.Context, string) (string, error) {
+	panic("unexpected GetValue call")
+}
+
+func (s *userHandlerSettingRepoStub) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+
+func (s *userHandlerSettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
+func (s *userHandlerSettingRepoStub) SetMultiple(context.Context, map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (s *userHandlerSettingRepoStub) GetAll(context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+
+func (s *userHandlerSettingRepoStub) Delete(context.Context, string) error {
+	panic("unexpected Delete call")
+}
 func (s *userHandlerRepoStub) UnbindUserAuthProvider(_ context.Context, _ int64, provider string) error {
 	s.unbound = append(s.unbound, provider)
 	filtered := s.identities[:0]
@@ -130,6 +216,64 @@ func (s *userHandlerRepoStub) UnbindUserAuthProvider(_ context.Context, _ int64,
 	}
 	s.identities = append([]service.UserAuthIdentityRecord(nil), filtered...)
 	return nil
+}
+
+func TestUserHandlerClaimDailyCheckinDuplicateReturnsSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &userHandlerRepoStub{
+		user: &service.User{
+			ID:       11,
+			Email:    "daily-checkin@example.com",
+			Username: "daily-checkin",
+			Role:     service.RoleUser,
+			Status:   service.StatusActive,
+			Balance:  10,
+		},
+	}
+	settings := &userHandlerSettingRepoStub{values: map[string]string{
+		service.SettingKeyDailyCheckinEnabled:   "true",
+		service.SettingKeyDailyCheckinMinReward: "2",
+		service.SettingKeyDailyCheckinMaxReward: "2",
+	}}
+	handler := NewUserHandler(service.NewUserService(repo, settings, nil, nil), nil, nil, nil, nil)
+
+	first := httptest.NewRecorder()
+	firstCtx, _ := gin.CreateTestContext(first)
+	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/user/daily-checkin", nil)
+	firstCtx.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 11})
+
+	handler.ClaimDailyCheckin(firstCtx)
+
+	require.Equal(t, http.StatusOK, first.Code)
+
+	second := httptest.NewRecorder()
+	secondCtx, _ := gin.CreateTestContext(second)
+	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/user/daily-checkin", nil)
+	secondCtx.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 11})
+
+	handler.ClaimDailyCheckin(secondCtx)
+
+	require.Equal(t, http.StatusOK, second.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			ClaimedToday   bool    `json:"claimed_today"`
+			AlreadyClaimed bool    `json:"already_claimed"`
+			Reward         float64 `json:"reward"`
+			Balance        float64 `json:"balance"`
+		} `json:"data"`
+		Reason string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Empty(t, resp.Reason)
+	require.True(t, resp.Data.ClaimedToday)
+	require.True(t, resp.Data.AlreadyClaimed)
+	require.Equal(t, 2.0, resp.Data.Reward)
+	require.Equal(t, 12.0, resp.Data.Balance)
+	require.Len(t, repo.checkinClaimed, 1)
 }
 
 func TestUserHandlerUpdateProfileReturnsAvatarURL(t *testing.T) {
@@ -272,19 +416,19 @@ func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 			AvatarURL:    "https://cdn.example.com/linuxdo.png",
 			AvatarSource: "remote_url",
 		},
-			identities: []service.UserAuthIdentityRecord{
-				{
-					ProviderType:    "linuxdo",
-					ProviderKey:     "linuxdo",
-					ProviderSubject: "linuxdo-subject-21",
-					VerifiedAt:      &verifiedAt,
-					Metadata: map[string]any{
-						"username":   "linuxdo-handle",
-						"avatar_url": "https://cdn.example.com/linuxdo.png",
-					},
+		identities: []service.UserAuthIdentityRecord{
+			{
+				ProviderType:    "linuxdo",
+				ProviderKey:     "linuxdo",
+				ProviderSubject: "linuxdo-subject-21",
+				VerifiedAt:      &verifiedAt,
+				Metadata: map[string]any{
+					"username":   "linuxdo-handle",
+					"avatar_url": "https://cdn.example.com/linuxdo.png",
 				},
 			},
-		}
+		},
+	}
 	handler := NewUserHandler(service.NewUserService(repo, nil, nil, nil), nil, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()

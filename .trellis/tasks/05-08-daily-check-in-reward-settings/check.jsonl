@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend review checklist for new daily check-in APIs, settings, persistence, and tests."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review migration safety and unique user/day tracking."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Review API error compatibility for disabled and duplicate check-in cases."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality gates and test expectations."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend review checklist for profile and settings UI/API integration."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review component layout, accessibility, responsive and dark-mode behavior."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Review typed API/settings contract changes."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality gates, i18n, and test expectations."}

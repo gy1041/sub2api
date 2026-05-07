@@ -5,10 +5,18 @@ import ProfileView from '@/views/user/ProfileView.vue'
 const {
   fetchPublicSettingsMock,
   refreshUserMock,
-  authState
+  authState,
+  dailyCheckinStatusMock,
+  claimDailyCheckinMock,
+  showErrorMock,
+  showSuccessMock
 } = vi.hoisted(() => ({
   fetchPublicSettingsMock: vi.fn(),
   refreshUserMock: vi.fn(),
+  dailyCheckinStatusMock: vi.fn(),
+  claimDailyCheckinMock: vi.fn(),
+  showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
   authState: {
     user: null as Record<string, unknown> | null,
     refreshUser: vi.fn()
@@ -21,12 +29,22 @@ vi.mock('@/stores/auth', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    fetchPublicSettings: fetchPublicSettingsMock
+    fetchPublicSettings: fetchPublicSettingsMock,
+    showError: showErrorMock,
+    showSuccess: showSuccessMock
   })
 }))
 
+vi.mock('@/api', () => ({
+  userAPI: {
+    getDailyCheckinStatus: dailyCheckinStatusMock,
+    claimDailyCheckin: claimDailyCheckinMock
+  }
+}))
+
 vi.mock('@/utils/format', () => ({
-  formatDate: () => 'April 2026'
+  formatDate: () => 'April 2026',
+  formatCurrency: (value: number | null | undefined) => `$${Number(value ?? 0).toFixed(2)}`
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -43,7 +61,20 @@ describe('ProfileView', () => {
   beforeEach(() => {
     refreshUserMock.mockReset()
     fetchPublicSettingsMock.mockReset()
+    dailyCheckinStatusMock.mockReset()
+    claimDailyCheckinMock.mockReset()
+    showErrorMock.mockReset()
+    showSuccessMock.mockReset()
     refreshUserMock.mockResolvedValue(undefined)
+    dailyCheckinStatusMock.mockResolvedValue({
+      enabled: false,
+      claimed_today: false,
+      reward: null,
+      balance: 10,
+      min_reward: 0,
+      max_reward: 0,
+      checkin_date: '2026-05-08'
+    })
     authState.refreshUser = refreshUserMock
     authState.user = {
       id: 1,
@@ -81,6 +112,7 @@ describe('ProfileView', () => {
           StatCard: { template: '<div class="stat-card" />' },
           ProfileInfoCard: { template: '<div data-testid="profile-info-card" />' },
           ProfileBalanceNotifyCard: { template: '<div data-testid="profile-balance-notify-card" />' },
+          ProfileDailyCheckinCard: { template: '<div data-testid="profile-daily-checkin-card" />' },
           ProfilePasswordForm: { template: '<div data-testid="profile-password-form" />' },
           ProfileTotpCard: { template: '<div data-testid="profile-totp-card" />' },
           Icon: true
@@ -93,7 +125,9 @@ describe('ProfileView', () => {
     expect(wrapper.findAll('.stat-card')).toHaveLength(0)
     expect(wrapper.get('[data-testid="profile-shell"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-info-card')
+    expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-daily-checkin-card')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-password-form')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-totp-card')
   })
+
 })

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"image"
 	"image/png"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,8 @@ import (
 type mockUserRepo struct {
 	updateBalanceErr        error
 	updateBalanceFn         func(ctx context.Context, id int64, amount float64) error
+	checkinRecords          map[string]*DailyCheckinRecord
+	checkinClaims           []float64
 	getByIDUser             *User
 	getByIDErr              error
 	identities              []UserAuthIdentityRecord
@@ -188,6 +191,41 @@ func (m *mockUserRepo) UpdateBalance(ctx context.Context, id int64, amount float
 	}
 	return m.updateBalanceErr
 }
+func (m *mockUserRepo) GetDailyCheckin(_ context.Context, userID int64, day time.Time) (*DailyCheckinRecord, error) {
+	key := dailyCheckinMockKey(userID, day)
+	if m.checkinRecords == nil || m.checkinRecords[key] == nil {
+		return nil, nil
+	}
+	record := *m.checkinRecords[key]
+	return &record, nil
+}
+func (m *mockUserRepo) ClaimDailyCheckin(_ context.Context, userID int64, day time.Time, reward float64) (*DailyCheckinRecord, bool, error) {
+	if m.checkinRecords == nil {
+		m.checkinRecords = make(map[string]*DailyCheckinRecord)
+	}
+	key := dailyCheckinMockKey(userID, day)
+	if m.checkinRecords[key] != nil {
+		record := *m.checkinRecords[key]
+		return &record, true, nil
+	}
+	if m.getByIDUser == nil {
+		return nil, false, ErrUserNotFound
+	}
+	m.checkinClaims = append(m.checkinClaims, reward)
+	m.getByIDUser.Balance += reward
+	record := &DailyCheckinRecord{
+		UserID:    userID,
+		Day:       day,
+		Reward:    reward,
+		Balance:   m.getByIDUser.Balance,
+		ClaimedAt: time.Now().UTC(),
+	}
+	m.checkinRecords[key] = record
+	return record, false, nil
+}
+func dailyCheckinMockKey(userID int64, day time.Time) string {
+	return strconv.FormatInt(userID, 10) + ":" + day.Format("2006-01-02")
+}
 func (m *mockUserRepo) UpdateUserLastActiveAt(_ context.Context, userID int64, activeAt time.Time) error {
 	m.updateLastActiveUserIDs = append(m.updateLastActiveUserIDs, userID)
 	m.updateLastActiveAt = append(m.updateLastActiveAt, activeAt)
@@ -202,7 +240,7 @@ func (m *mockUserRepo) RemoveGroupFromAllowedGroups(context.Context, int64) (int
 
 func (m *mockUserRepo) BatchSetConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
 func (m *mockUserRepo) BatchAddConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
-func (m *mockUserRepo) AddGroupToAllowedGroups(context.Context, int64, int64) error { return nil }
+func (m *mockUserRepo) AddGroupToAllowedGroups(context.Context, int64, int64) error    { return nil }
 func (m *mockUserRepo) ListUserAuthIdentities(context.Context, int64) ([]UserAuthIdentityRecord, error) {
 	out := make([]UserAuthIdentityRecord, len(m.identities))
 	copy(out, m.identities)
@@ -850,4 +888,112 @@ func TestGetProfile_HydratesAvatarFromRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://cdn.example.com/profile.png", user.AvatarURL)
 	require.Equal(t, "remote_url", user.AvatarSource)
+}
+
+func TestClaimDailyCheckin_Disabled(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 1, Balance: 10}}
+	settings := &mockUserSettingRepo{values: map[string]string{
+		SettingKeyDailyCheckinEnabled: "false",
+	}}
+	svc := NewUserService(repo, settings, nil, nil)
+
+	_, err := svc.ClaimDailyCheckin(context.Background(), 1)
+	require.ErrorIs(t, err, ErrDailyCheckinDisabled)
+	require.Empty(t, repo.checkinClaims)
+}
+
+func TestClaimDailyCheckin_RewardsWithinRange(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 2, Balance: 10}}
+	settings := &mockUserSettingRepo{values: map[string]string{
+		SettingKeyDailyCheckinEnabled:   "true",
+		SettingKeyDailyCheckinMinReward: "1.25",
+		SettingKeyDailyCheckinMaxReward: "1.75",
+	}}
+	cache := &mockBillingCache{}
+	svc := NewUserService(repo, settings, nil, cache)
+
+	result, err := svc.ClaimDailyCheckin(context.Background(), 2)
+	require.NoError(t, err)
+	require.False(t, result.AlreadyClaimed)
+	require.True(t, result.ClaimedToday)
+	require.NotNil(t, result.Reward)
+	require.GreaterOrEqual(t, *result.Reward, 1.25)
+	require.LessOrEqual(t, *result.Reward, 1.75)
+	require.InDelta(t, 10+*result.Reward, result.Balance, 0.0001)
+	require.Len(t, repo.checkinClaims, 1)
+	require.Eventually(t, func() bool {
+		return cache.invalidateCallCount.Load() == 1
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestGetDailyCheckinStatus_UsesCurrentBalanceForClaimedDay(t *testing.T) {
+	today := dailyCheckinToday()
+	repo := &mockUserRepo{
+		getByIDUser: &User{ID: 4, Balance: 6.75},
+		checkinRecords: map[string]*DailyCheckinRecord{
+			dailyCheckinMockKey(4, today): {
+				UserID:    4,
+				Day:       today,
+				Reward:    2,
+				Balance:   12,
+				ClaimedAt: today.Add(8 * time.Hour),
+			},
+		},
+	}
+	settings := &mockUserSettingRepo{values: map[string]string{
+		SettingKeyDailyCheckinEnabled:   "true",
+		SettingKeyDailyCheckinMinReward: "1",
+		SettingKeyDailyCheckinMaxReward: "3",
+	}}
+	svc := NewUserService(repo, settings, nil, nil)
+
+	status, err := svc.GetDailyCheckinStatus(context.Background(), 4)
+	require.NoError(t, err)
+	require.True(t, status.ClaimedToday)
+	require.Equal(t, 6.75, status.Balance)
+	require.NotNil(t, status.Reward)
+	require.Equal(t, 2.0, *status.Reward)
+}
+
+func TestClaimDailyCheckin_DuplicateReturnsAlreadyClaimedWithoutSecondReward(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 3, Balance: 10}}
+	settings := &mockUserSettingRepo{values: map[string]string{
+		SettingKeyDailyCheckinEnabled:   "true",
+		SettingKeyDailyCheckinMinReward: "2",
+		SettingKeyDailyCheckinMaxReward: "2",
+	}}
+	svc := NewUserService(repo, settings, nil, nil)
+
+	first, err := svc.ClaimDailyCheckin(context.Background(), 3)
+	require.NoError(t, err)
+	second, err := svc.ClaimDailyCheckin(context.Background(), 3)
+	require.NoError(t, err)
+
+	require.False(t, first.AlreadyClaimed)
+	require.True(t, second.AlreadyClaimed)
+	require.Len(t, repo.checkinClaims, 1)
+	require.Equal(t, first.Reward, second.Reward)
+	require.Equal(t, first.Balance, second.Balance)
+}
+
+func TestClaimDailyCheckin_DuplicateReturnsCurrentBalance(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 5, Balance: 10}}
+	settings := &mockUserSettingRepo{values: map[string]string{
+		SettingKeyDailyCheckinEnabled:   "true",
+		SettingKeyDailyCheckinMinReward: "2",
+		SettingKeyDailyCheckinMaxReward: "2",
+	}}
+	svc := NewUserService(repo, settings, nil, nil)
+
+	first, err := svc.ClaimDailyCheckin(context.Background(), 5)
+	require.NoError(t, err)
+	repo.getByIDUser.Balance = 7
+	second, err := svc.ClaimDailyCheckin(context.Background(), 5)
+	require.NoError(t, err)
+
+	require.False(t, first.AlreadyClaimed)
+	require.True(t, second.AlreadyClaimed)
+	require.Len(t, repo.checkinClaims, 1)
+	require.Equal(t, 7.0, second.Balance)
+	require.Equal(t, first.Reward, second.Reward)
 }

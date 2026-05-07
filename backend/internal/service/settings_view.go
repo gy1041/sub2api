@@ -124,6 +124,9 @@ type SystemSettings struct {
 
 	DefaultConcurrency           int
 	DefaultBalance               float64
+	DailyCheckinEnabled          bool
+	DailyCheckinMinReward        float64
+	DailyCheckinMaxReward        float64
 	RiskControlEnabled           bool
 	AffiliateEnabled             bool
 	AffiliateRebateRate          float64

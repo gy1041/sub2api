@@ -4725,6 +4725,60 @@
           </div>
         </div>
 
+        <!-- Daily Check-in Reward -->
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h3 class="text-base font-medium text-gray-900 dark:text-white">
+              {{ t("admin.settings.dailyCheckin.title") }}
+            </h3>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t("admin.settings.dailyCheckin.description") }}
+            </p>
+          </div>
+          <div class="space-y-4 px-6 py-6">
+            <div class="flex items-center justify-between">
+              <label class="mb-0 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ t("admin.settings.dailyCheckin.enabled") }}
+              </label>
+              <Toggle
+                v-model="form.daily_checkin_enabled"
+                data-testid="daily-checkin-enabled"
+              />
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.dailyCheckin.minReward") }}
+                </label>
+                <input
+                  v-model.number="form.daily_checkin_min_reward"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="input"
+                  data-testid="daily-checkin-min-reward"
+                />
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.dailyCheckin.maxReward") }}
+                </label>
+                <input
+                  v-model.number="form.daily_checkin_max_reward"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="input"
+                  data-testid="daily-checkin-max-reward"
+                />
+              </div>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t("admin.settings.dailyCheckin.rewardHint") }}
+            </p>
+          </div>
+        </div>
+
         <!-- Affiliate (邀请返利) feature card -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -6328,6 +6382,9 @@ const form = reactive<SettingsForm>({
   login_agreement_updated_at: "2026-03-31",
   login_agreement_documents: defaultLoginAgreementDocuments(),
   default_balance: 0,
+  daily_checkin_enabled: false,
+  daily_checkin_min_reward: 0,
+  daily_checkin_max_reward: 0,
   affiliate_rebate_rate: 20,
   affiliate_rebate_freeze_hours: 0,
   affiliate_rebate_duration_days: 0,
@@ -7397,6 +7454,23 @@ async function saveSettings() {
       );
       return;
     }
+
+    const normalizedDailyCheckinMinReward = Number(form.daily_checkin_min_reward);
+    const normalizedDailyCheckinMaxReward = Number(form.daily_checkin_max_reward);
+    if (
+      !Number.isFinite(normalizedDailyCheckinMinReward) ||
+      !Number.isFinite(normalizedDailyCheckinMaxReward) ||
+      normalizedDailyCheckinMinReward < 0 ||
+      normalizedDailyCheckinMaxReward < 0
+    ) {
+      appStore.showError(t("admin.settings.dailyCheckin.rewardRangeError"));
+      return;
+    }
+    if (normalizedDailyCheckinMaxReward < normalizedDailyCheckinMinReward) {
+      appStore.showError(t("admin.settings.dailyCheckin.maxRewardError"));
+      return;
+    }
+
     // Validate URL fields — novalidate disables browser-native checks, so we validate here
     const isValidHttpUrl = (url: string): boolean => {
       if (!url) return true;
@@ -7434,6 +7508,9 @@ async function saveSettings() {
       login_agreement_updated_at: form.login_agreement_updated_at,
       login_agreement_documents: form.login_agreement_documents,
       default_balance: form.default_balance,
+      daily_checkin_enabled: form.daily_checkin_enabled,
+      daily_checkin_min_reward: normalizedDailyCheckinMinReward,
+      daily_checkin_max_reward: normalizedDailyCheckinMaxReward,
       affiliate_rebate_rate: Math.min(
         100,
         Math.max(0, Number(form.affiliate_rebate_rate) || 0),

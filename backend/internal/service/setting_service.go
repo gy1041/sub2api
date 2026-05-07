@@ -209,6 +209,12 @@ const (
 	defaultLoginAgreementDate    = "2026-03-31"
 )
 
+const (
+	SettingKeyDailyCheckinEnabled   = "daily_checkin_enabled"
+	SettingKeyDailyCheckinMinReward = "daily_checkin_min_reward"
+	SettingKeyDailyCheckinMaxReward = "daily_checkin_max_reward"
+)
+
 func normalizeLoginAgreementMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "checkbox":
@@ -1508,6 +1514,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
 	updates[SettingKeyDefaultBalance] = strconv.FormatFloat(settings.DefaultBalance, 'f', 8, 64)
+	updates[SettingKeyDailyCheckinEnabled] = strconv.FormatBool(settings.DailyCheckinEnabled)
+	updates[SettingKeyDailyCheckinMinReward] = strconv.FormatFloat(settings.DailyCheckinMinReward, 'f', 8, 64)
+	updates[SettingKeyDailyCheckinMaxReward] = strconv.FormatFloat(settings.DailyCheckinMaxReward, 'f', 8, 64)
 	settings.AffiliateRebateRate = clampAffiliateRebateRate(settings.AffiliateRebateRate)
 	updates[SettingKeyAffiliateRebateRate] = strconv.FormatFloat(settings.AffiliateRebateRate, 'f', 8, 64)
 	if settings.AffiliateRebateFreezeHours < 0 {
@@ -2283,6 +2292,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOIDCConnectUserInfoUsernamePath:          "",
 		SettingKeyDefaultConcurrency:                       strconv.Itoa(s.cfg.Default.UserConcurrency),
 		SettingKeyDefaultBalance:                           strconv.FormatFloat(s.cfg.Default.UserBalance, 'f', 8, 64),
+		SettingKeyDailyCheckinEnabled:                      "false",
+		SettingKeyDailyCheckinMinReward:                    "0",
+		SettingKeyDailyCheckinMaxReward:                    "0",
 		SettingKeyAffiliateRebateRate:                      strconv.FormatFloat(AffiliateRebateRateDefault, 'f', 8, 64),
 		SettingKeyAffiliateRebateFreezeHours:               strconv.Itoa(AffiliateRebateFreezeHoursDefault),
 		SettingKeyAffiliateRebateDurationDays:              strconv.Itoa(AffiliateRebateDurationDaysDefault),
@@ -2439,6 +2451,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.DefaultBalance = balance
 	} else {
 		result.DefaultBalance = s.cfg.Default.UserBalance
+	}
+	result.DailyCheckinEnabled = settings[SettingKeyDailyCheckinEnabled] == "true"
+	if reward, err := strconv.ParseFloat(settings[SettingKeyDailyCheckinMinReward], 64); err == nil && reward >= 0 {
+		result.DailyCheckinMinReward = reward
+	}
+	if reward, err := strconv.ParseFloat(settings[SettingKeyDailyCheckinMaxReward], 64); err == nil && reward >= 0 {
+		result.DailyCheckinMaxReward = reward
 	}
 	if rebateRate, err := strconv.ParseFloat(settings[SettingKeyAffiliateRebateRate], 64); err == nil {
 		result.AffiliateRebateRate = clampAffiliateRebateRate(rebateRate)

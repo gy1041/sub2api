@@ -707,6 +707,120 @@ func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount flo
 	return nil
 }
 
+func (r *userRepository) GetDailyCheckin(ctx context.Context, userID int64, day time.Time) (*service.DailyCheckinRecord, error) {
+	if r.sql == nil {
+		return nil, fmt.Errorf("sql executor is not configured")
+	}
+	var record service.DailyCheckinRecord
+	err := scanSingleRow(ctx, txAwareSQLExecutor(ctx, r.sql, r.client),
+		`SELECT user_id, checkin_date, reward, balance_after, claimed_at
+		 FROM daily_checkins
+		 WHERE user_id = $1 AND checkin_date = $2`,
+		[]any{userID, day.Format("2006-01-02")},
+		&record.UserID, &record.Day, &record.Reward, &record.Balance, &record.ClaimedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	record.Day = record.Day.UTC()
+	record.ClaimedAt = record.ClaimedAt.UTC()
+	return &record, nil
+}
+
+func (r *userRepository) ClaimDailyCheckin(ctx context.Context, userID int64, day time.Time, reward float64) (*service.DailyCheckinRecord, bool, error) {
+	if r.sql == nil {
+		return nil, false, fmt.Errorf("sql executor is not configured")
+	}
+
+	run := func(txCtx context.Context) (*service.DailyCheckinRecord, bool, error) {
+		exec := txAwareSQLExecutor(txCtx, r.sql, r.client)
+		dayKey := day.Format("2006-01-02")
+		releaseLock, lockErr := lockRepositoryScopedKeys(txCtx, r.client, exec, fmt.Sprintf("daily-checkin:%d:%s", userID, dayKey))
+		if lockErr != nil {
+			return nil, false, lockErr
+		}
+		defer releaseLock()
+
+		var record service.DailyCheckinRecord
+		var alreadyClaimed bool
+		err := scanSingleRow(txCtx, exec,
+			`WITH inserted AS (
+				INSERT INTO daily_checkins (user_id, checkin_date, reward, balance_after, claimed_at)
+				VALUES ($1, $2, $3, 0, NOW())
+				ON CONFLICT (user_id, checkin_date) DO NOTHING
+				RETURNING id
+			),
+			updated_user AS (
+				UPDATE users
+				SET balance = balance + $3,
+					total_recharged = total_recharged + $3,
+					updated_at = NOW()
+				WHERE id = $1
+				  AND deleted_at IS NULL
+				  AND EXISTS (SELECT 1 FROM inserted)
+				RETURNING balance
+			),
+			finalized AS (
+				UPDATE daily_checkins dc
+				SET balance_after = updated_user.balance
+				FROM updated_user
+				WHERE dc.id = (SELECT id FROM inserted)
+				RETURNING dc.user_id, dc.checkin_date, dc.reward, dc.balance_after, dc.claimed_at, false AS already_claimed
+			),
+			existing AS (
+				SELECT dc.user_id, dc.checkin_date, dc.reward, dc.balance_after, dc.claimed_at, true AS already_claimed
+				FROM daily_checkins dc
+				WHERE dc.user_id = $1
+				  AND dc.checkin_date = $2
+				  AND NOT EXISTS (SELECT 1 FROM inserted)
+			)
+			SELECT user_id, checkin_date, reward, balance_after, claimed_at, already_claimed FROM finalized
+			UNION ALL
+			SELECT user_id, checkin_date, reward, balance_after, claimed_at, already_claimed FROM existing
+			LIMIT 1`,
+			[]any{userID, dayKey, reward},
+			&record.UserID, &record.Day, &record.Reward, &record.Balance, &record.ClaimedAt, &alreadyClaimed,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			existing, getErr := r.GetDailyCheckin(txCtx, userID, day)
+			if getErr != nil {
+				return nil, false, getErr
+			}
+			if existing != nil {
+				return existing, true, nil
+			}
+			return nil, false, service.ErrUserNotFound
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		record.Day = record.Day.UTC()
+		record.ClaimedAt = record.ClaimedAt.UTC()
+		return &record, alreadyClaimed, nil
+	}
+
+	if dbent.TxFromContext(ctx) != nil {
+		return run(ctx)
+	}
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	record, alreadyClaimed, err := run(txCtx)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return record, alreadyClaimed, nil
+}
+
 // DeductBalance 扣除用户余额
 // 透支策略：允许余额变为负数，确保当前请求能够完成
 // 中间件会阻止余额 <= 0 的用户发起后续请求

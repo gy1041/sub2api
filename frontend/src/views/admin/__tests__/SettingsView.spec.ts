@@ -289,6 +289,9 @@ const baseSettingsResponse = {
   totp_enabled: false,
   totp_encryption_key_configured: false,
   default_balance: 0,
+  daily_checkin_enabled: false,
+  daily_checkin_min_reward: 0,
+  daily_checkin_max_reward: 0,
   default_concurrency: 1,
   default_subscriptions: [],
   site_name: "Sub2API",
@@ -449,6 +452,16 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(usersTabButton).toBeDefined();
   await usersTabButton?.trigger("click");
+  await flushPromises();
+}
+
+async function openFeaturesTab(wrapper: ReturnType<typeof mountView>) {
+  const featuresTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.features"));
+
+  expect(featuresTabButton).toBeDefined();
+  await featuresTabButton?.trigger("click");
   await flushPromises();
 }
 
@@ -893,7 +906,7 @@ describe("admin SettingsView wechat connect controls", () => {
     const wrapper = mountView();
 
     await flushPromises();
-    await openUsersTab(wrapper);
+    await openFeaturesTab(wrapper);
 
     expect(
       (
@@ -937,6 +950,80 @@ describe("admin SettingsView wechat connect controls", () => {
         oidc_connect_use_pkce: false,
         oidc_connect_validate_id_token: false,
       }),
+    );
+  });
+
+  it("round-trips daily check-in reward settings through the save payload", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      daily_checkin_enabled: true,
+      daily_checkin_min_reward: 1.25,
+      daily_checkin_max_reward: 2.5,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openFeaturesTab(wrapper);
+
+    expect(
+      (
+        wrapper.get('[data-testid="daily-checkin-enabled"]')
+          .element as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('[data-testid="daily-checkin-min-reward"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("1.25");
+    expect(
+      (
+        wrapper.get('[data-testid="daily-checkin-max-reward"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("2.5");
+
+    await wrapper
+      .get('[data-testid="daily-checkin-enabled"]')
+      .setValue(false);
+    await wrapper
+      .get('[data-testid="daily-checkin-min-reward"]')
+      .setValue("1.5");
+    await wrapper
+      .get('[data-testid="daily-checkin-max-reward"]')
+      .setValue("3.75");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        daily_checkin_enabled: false,
+        daily_checkin_min_reward: 1.5,
+        daily_checkin_max_reward: 3.75,
+      }),
+    );
+  });
+
+  it("blocks invalid daily check-in reward ranges before saving", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openUsersTab(wrapper);
+    await wrapper
+      .get('[data-testid="daily-checkin-min-reward"]')
+      .setValue("5");
+    await wrapper
+      .get('[data-testid="daily-checkin-max-reward"]')
+      .setValue("2");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(
+      "admin.settings.dailyCheckin.maxRewardError",
     );
   });
 });

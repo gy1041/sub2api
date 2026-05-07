@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend route, handler, service, repository, migration, error handling, and test guidelines for daily check-in APIs and settings."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Placement rules for new backend handlers, services, repositories, and routes."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration and persistence guidance for the daily check-in tracking table and settings defaults."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error response conventions for disabled feature, duplicate claim, and validation failures."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend formatting, testing, and quality gates."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend Vue, API, state, i18n, and quality guidelines for profile/settings UI changes."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Placement rules for new profile component/API additions."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue SFC, Tailwind, accessibility, and dark-mode conventions for the profile check-in card and settings controls."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed API/domain contract guidance for daily check-in status and settings fields."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend tests, lint/type-check, i18n, and review expectations."}

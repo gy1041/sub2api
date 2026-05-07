@@ -185,6 +185,31 @@ export async function transferAffiliateQuota(): Promise<AffiliateTransferRespons
   return data
 }
 
+export interface DailyCheckinStatus {
+  enabled: boolean
+  claimed_today: boolean
+  reward?: number | null
+  balance: number
+  min_reward: number
+  max_reward: number
+  checkin_date: string
+  claimed_at?: string | null
+}
+
+export interface DailyCheckinClaimResult extends DailyCheckinStatus {
+  already_claimed: boolean
+}
+
+export async function getDailyCheckinStatus(): Promise<DailyCheckinStatus> {
+  const { data } = await apiClient.get<DailyCheckinStatus>('/user/daily-checkin')
+  return data
+}
+
+export async function claimDailyCheckin(): Promise<DailyCheckinClaimResult> {
+  const { data } = await apiClient.post<DailyCheckinClaimResult>('/user/daily-checkin')
+  return data
+}
+
 export const userAPI = {
   getProfile,
   updateProfile,
@@ -199,7 +224,9 @@ export const userAPI = {
   buildOAuthBindingStartURL,
   startOAuthBinding,
   getAffiliateDetail,
-  transferAffiliateQuota
+  transferAffiliateQuota,
+  getDailyCheckinStatus,
+  claimDailyCheckin
 }
 
 export default userAPI

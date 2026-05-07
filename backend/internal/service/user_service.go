@@ -8,8 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"image"
 	"image/color"
 	stddraw "image/draw"
@@ -17,12 +15,17 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"log/slog"
+	"math"
+	"math/rand/v2"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/sync/singleflight"
@@ -42,6 +45,7 @@ var (
 		"IDENTITY_UNBIND_LAST_METHOD",
 		"bind another sign-in method before unbinding this provider",
 	)
+	ErrDailyCheckinDisabled = infraerrors.Forbidden("DAILY_CHECKIN_DISABLED", "daily check-in is disabled")
 )
 
 const (
@@ -124,6 +128,30 @@ type UserAuthIdentityRecord struct {
 	UpdatedAt       time.Time
 }
 
+type DailyCheckinRecord struct {
+	UserID    int64
+	Day       time.Time
+	Reward    float64
+	Balance   float64
+	ClaimedAt time.Time
+}
+
+type DailyCheckinStatus struct {
+	Enabled      bool       `json:"enabled"`
+	ClaimedToday bool       `json:"claimed_today"`
+	Reward       *float64   `json:"reward,omitempty"`
+	Balance      float64    `json:"balance"`
+	MinReward    float64    `json:"min_reward"`
+	MaxReward    float64    `json:"max_reward"`
+	CheckinDate  string     `json:"checkin_date"`
+	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
+}
+
+type DailyCheckinClaimResult struct {
+	DailyCheckinStatus
+	AlreadyClaimed bool `json:"already_claimed"`
+}
+
 type UserIdentitySummary struct {
 	Provider      string     `json:"provider"`
 	Bound         bool       `json:"bound"`
@@ -197,6 +225,11 @@ type userProfileIdentityTxRunner interface {
 	WithUserProfileIdentityTx(ctx context.Context, fn func(txCtx context.Context) error) error
 }
 
+type dailyCheckinRepository interface {
+	GetDailyCheckin(ctx context.Context, userID int64, day time.Time) (*DailyCheckinRecord, error)
+	ClaimDailyCheckin(ctx context.Context, userID int64, day time.Time, reward float64) (*DailyCheckinRecord, bool, error)
+}
+
 // ChangePasswordRequest 修改密码请求
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
@@ -243,6 +276,155 @@ func (s *UserService) GetProfile(ctx context.Context, userID int64) (*User, erro
 		return nil, fmt.Errorf("get user avatar: %w", err)
 	}
 	return user, nil
+}
+
+func (s *UserService) GetDailyCheckinStatus(ctx context.Context, userID int64) (*DailyCheckinStatus, error) {
+	settings, err := s.getDailyCheckinSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
+	}
+	status := buildDailyCheckinStatus(settings, user.Balance, nil)
+	repo, ok := s.userRepo.(dailyCheckinRepository)
+	if !ok {
+		return status, nil
+	}
+	record, err := repo.GetDailyCheckin(ctx, userID, dailyCheckinToday())
+	if err != nil {
+		return nil, fmt.Errorf("get daily check-in: %w", err)
+	}
+	if record != nil {
+		status = buildDailyCheckinStatus(settings, user.Balance, record)
+	}
+	return status, nil
+}
+
+func (s *UserService) ClaimDailyCheckin(ctx context.Context, userID int64) (*DailyCheckinClaimResult, error) {
+	settings, err := s.getDailyCheckinSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !settings.Enabled {
+		return nil, ErrDailyCheckinDisabled
+	}
+	repo, ok := s.userRepo.(dailyCheckinRepository)
+	if !ok {
+		return nil, infraerrors.New(500, "DAILY_CHECKIN_REPOSITORY_UNAVAILABLE", "daily check-in repository unavailable")
+	}
+	today := dailyCheckinToday()
+	existing, err := repo.GetDailyCheckin(ctx, userID, today)
+	if err != nil {
+		return nil, fmt.Errorf("get existing daily check-in: %w", err)
+	}
+	if existing != nil {
+		user, userErr := s.userRepo.GetByID(ctx, userID)
+		if userErr != nil {
+			return nil, fmt.Errorf("get user: %w", userErr)
+		}
+		return &DailyCheckinClaimResult{
+			DailyCheckinStatus: *buildDailyCheckinStatus(settings, user.Balance, existing),
+			AlreadyClaimed:     true,
+		}, nil
+	}
+	reward := randomDailyCheckinReward(settings.MinReward, settings.MaxReward)
+	record, alreadyClaimed, err := repo.ClaimDailyCheckin(ctx, userID, today, reward)
+	if err != nil {
+		return nil, fmt.Errorf("claim daily check-in: %w", err)
+	}
+	if alreadyClaimed {
+		user, userErr := s.userRepo.GetByID(ctx, userID)
+		if userErr != nil {
+			return nil, fmt.Errorf("get user: %w", userErr)
+		}
+		return &DailyCheckinClaimResult{
+			DailyCheckinStatus: *buildDailyCheckinStatus(settings, user.Balance, record),
+			AlreadyClaimed:     true,
+		}, nil
+	}
+	s.invalidateBalanceCaches(ctx, userID)
+	return &DailyCheckinClaimResult{
+		DailyCheckinStatus: *buildDailyCheckinStatus(settings, record.Balance, record),
+		AlreadyClaimed:     false,
+	}, nil
+}
+
+type dailyCheckinSettings struct {
+	Enabled   bool
+	MinReward float64
+	MaxReward float64
+}
+
+func (s *UserService) getDailyCheckinSettings(ctx context.Context) (dailyCheckinSettings, error) {
+	if s.settingRepo == nil {
+		return dailyCheckinSettings{}, nil
+	}
+	values, err := s.settingRepo.GetMultiple(ctx, []string{
+		SettingKeyDailyCheckinEnabled,
+		SettingKeyDailyCheckinMinReward,
+		SettingKeyDailyCheckinMaxReward,
+	})
+	if err != nil {
+		return dailyCheckinSettings{}, fmt.Errorf("get daily check-in settings: %w", err)
+	}
+	minReward := parseNonNegativeFloat(values[SettingKeyDailyCheckinMinReward])
+	maxReward := parseNonNegativeFloat(values[SettingKeyDailyCheckinMaxReward])
+	if maxReward < minReward {
+		maxReward = minReward
+	}
+	return dailyCheckinSettings{
+		Enabled:   values[SettingKeyDailyCheckinEnabled] == "true",
+		MinReward: minReward,
+		MaxReward: maxReward,
+	}, nil
+}
+
+func parseNonNegativeFloat(raw string) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func dailyCheckinToday() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func randomDailyCheckinReward(minReward, maxReward float64) float64 {
+	if maxReward < minReward {
+		maxReward = minReward
+	}
+	if maxReward == minReward {
+		return roundMoney(minReward)
+	}
+	return roundMoney(minReward + rand.Float64()*(maxReward-minReward))
+}
+
+func roundMoney(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func buildDailyCheckinStatus(settings dailyCheckinSettings, balance float64, record *DailyCheckinRecord) *DailyCheckinStatus {
+	day := dailyCheckinToday().Format("2006-01-02")
+	status := &DailyCheckinStatus{
+		Enabled:      settings.Enabled,
+		ClaimedToday: record != nil,
+		Balance:      balance,
+		MinReward:    settings.MinReward,
+		MaxReward:    settings.MaxReward,
+		CheckinDate:  day,
+	}
+	if record != nil {
+		reward := record.Reward
+		status.Reward = &reward
+		status.ClaimedAt = &record.ClaimedAt
+		status.CheckinDate = record.Day.Format("2006-01-02")
+	}
+	return status
 }
 
 func (s *UserService) GetProfileIdentitySummaries(ctx context.Context, userID int64, user *User) (UserIdentitySummarySet, error) {
@@ -1049,6 +1231,11 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 	if err := s.userRepo.UpdateBalance(ctx, userID, amount); err != nil {
 		return fmt.Errorf("update balance: %w", err)
 	}
+	s.invalidateBalanceCaches(ctx, userID)
+	return nil
+}
+
+func (s *UserService) invalidateBalanceCaches(ctx context.Context, userID int64) {
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 	}
@@ -1066,7 +1253,6 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 			}
 		}()
 	}
-	return nil
 }
 
 // UpdateConcurrency 更新用户并发数（管理员功能）

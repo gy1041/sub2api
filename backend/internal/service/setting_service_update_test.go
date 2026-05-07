@@ -243,6 +243,21 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "true", repo.updates[openAIAdvancedSchedulerSettingKey])
 }
 
+func TestSettingService_UpdateSettings_DailyCheckinFields(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		DailyCheckinEnabled:   true,
+		DailyCheckinMinReward: 1.25,
+		DailyCheckinMaxReward: 2.5,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyDailyCheckinEnabled])
+	require.Equal(t, "1.25000000", repo.updates[SettingKeyDailyCheckinMinReward])
+	require.Equal(t, "2.50000000", repo.updates[SettingKeyDailyCheckinMaxReward])
+}
+
 func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

@@ -200,6 +200,40 @@ func (h *UserHandler) TransferAffiliateQuota(c *gin.Context) {
 	})
 }
 
+// GetDailyCheckinStatus returns today's daily check-in state for the current user.
+// GET /api/v1/user/daily-checkin
+func (h *UserHandler) GetDailyCheckinStatus(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	status, err := h.userService.GetDailyCheckinStatus(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, status)
+}
+
+// ClaimDailyCheckin claims today's daily check-in reward for the current user.
+// POST /api/v1/user/daily-checkin
+func (h *UserHandler) ClaimDailyCheckin(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	result, err := h.userService.ClaimDailyCheckin(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 type StartIdentityBindingRequest struct {
 	Provider   string `json:"provider" binding:"required"`
 	RedirectTo string `json:"redirect_to"`

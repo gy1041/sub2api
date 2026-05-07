@@ -199,6 +199,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		CustomEndpoints:                        dto.ParseCustomEndpoints(settings.CustomEndpoints),
 		DefaultConcurrency:                     settings.DefaultConcurrency,
 		DefaultBalance:                         settings.DefaultBalance,
+		DailyCheckinEnabled:                    settings.DailyCheckinEnabled,
+		DailyCheckinMinReward:                  settings.DailyCheckinMinReward,
+		DailyCheckinMaxReward:                  settings.DailyCheckinMaxReward,
 		RiskControlEnabled:                     settings.RiskControlEnabled,
 		AffiliateRebateRate:                    settings.AffiliateRebateRate,
 		AffiliateRebateFreezeHours:             settings.AffiliateRebateFreezeHours,
@@ -446,6 +449,9 @@ type UpdateSettingsRequest struct {
 	// 默认配置
 	DefaultConcurrency                       int                               `json:"default_concurrency"`
 	DefaultBalance                           float64                           `json:"default_balance"`
+	DailyCheckinEnabled                      *bool                             `json:"daily_checkin_enabled"`
+	DailyCheckinMinReward                    *float64                          `json:"daily_checkin_min_reward"`
+	DailyCheckinMaxReward                    *float64                          `json:"daily_checkin_max_reward"`
 	AffiliateRebateRate                      *float64                          `json:"affiliate_rebate_rate"`
 	AffiliateRebateFreezeHours               *int                              `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays              *int                              `json:"affiliate_rebate_duration_days"`
@@ -599,6 +605,26 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.DefaultBalance < 0 {
 		req.DefaultBalance = 0
+	}
+	dailyCheckinEnabled := previousSettings.DailyCheckinEnabled
+	if req.DailyCheckinEnabled != nil {
+		dailyCheckinEnabled = *req.DailyCheckinEnabled
+	}
+	dailyCheckinMinReward := previousSettings.DailyCheckinMinReward
+	if req.DailyCheckinMinReward != nil {
+		dailyCheckinMinReward = *req.DailyCheckinMinReward
+	}
+	dailyCheckinMaxReward := previousSettings.DailyCheckinMaxReward
+	if req.DailyCheckinMaxReward != nil {
+		dailyCheckinMaxReward = *req.DailyCheckinMaxReward
+	}
+	if dailyCheckinMinReward < 0 || dailyCheckinMaxReward < 0 {
+		response.BadRequest(c, "Daily check-in reward amounts must be non-negative")
+		return
+	}
+	if dailyCheckinMaxReward < dailyCheckinMinReward {
+		response.BadRequest(c, "Daily check-in max reward must be greater than or equal to min reward")
+		return
 	}
 	affiliateRebateRate := previousSettings.AffiliateRebateRate
 	if req.AffiliateRebateRate != nil {
@@ -1350,6 +1376,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomEndpoints:                  customEndpointsJSON,
 		DefaultConcurrency:               req.DefaultConcurrency,
 		DefaultBalance:                   req.DefaultBalance,
+		DailyCheckinEnabled:              dailyCheckinEnabled,
+		DailyCheckinMinReward:            dailyCheckinMinReward,
+		DailyCheckinMaxReward:            dailyCheckinMaxReward,
 		AffiliateRebateRate:              affiliateRebateRate,
 		AffiliateRebateFreezeHours:       affiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:      affiliateRebateDurationDays,
@@ -1722,6 +1751,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomEndpoints:                        dto.ParseCustomEndpoints(updatedSettings.CustomEndpoints),
 		DefaultConcurrency:                     updatedSettings.DefaultConcurrency,
 		DefaultBalance:                         updatedSettings.DefaultBalance,
+		DailyCheckinEnabled:                    updatedSettings.DailyCheckinEnabled,
+		DailyCheckinMinReward:                  updatedSettings.DailyCheckinMinReward,
+		DailyCheckinMaxReward:                  updatedSettings.DailyCheckinMaxReward,
 		AffiliateRebateRate:                    updatedSettings.AffiliateRebateRate,
 		AffiliateRebateFreezeHours:             updatedSettings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            updatedSettings.AffiliateRebateDurationDays,
