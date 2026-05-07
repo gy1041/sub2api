@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"time"
@@ -63,9 +64,9 @@ type bindPendingOAuthLoginRequest struct {
 }
 
 type createPendingOAuthAccountRequest struct {
-	Email            string `json:"email" binding:"required,email"`
+	Email            string `json:"email,omitempty"`
 	VerifyCode       string `json:"verify_code,omitempty"`
-	Password         string `json:"password" binding:"required,min=6"`
+	Password         string `json:"password,omitempty"`
 	InvitationCode   string `json:"invitation_code,omitempty"`
 	AffCode          string `json:"aff_code,omitempty"`
 	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
@@ -1617,6 +1618,20 @@ func respondPendingOAuthBindingApplyError(c *gin.Context, err error) {
 	response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to bind pending oauth identity").WithCause(err))
 }
 
+func validatePendingOAuthLocalAccountRequest(req createPendingOAuthAccountRequest) error {
+	email := strings.TrimSpace(req.Email)
+	if email == "" {
+		return service.ErrEmailVerifyRequired
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return service.ErrEmailVerifyRequired
+	}
+	if len(strings.TrimSpace(req.Password)) < 6 {
+		return infraerrors.BadRequest("PASSWORD_REQUIRED", "password is required")
+	}
+	return nil
+}
+
 func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string) {
 	var req createPendingOAuthAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1638,6 +1653,17 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		return
 	}
 
+	isLinuxDoNoEmailSignup := strings.EqualFold(strings.TrimSpace(session.ProviderType), "linuxdo") &&
+		!h.authService.IsEmailVerifyEnabled(c.Request.Context()) &&
+		strings.TrimSpace(req.Email) == ""
+
+	if !isLinuxDoNoEmailSignup {
+		if err := validatePendingOAuthLocalAccountRequest(req); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+
 	client := h.entClient()
 	if client == nil {
 		response.ErrorFrom(c, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready"))
@@ -1645,41 +1671,55 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 	}
 
 	email := strings.TrimSpace(strings.ToLower(req.Email))
-	existingUser, err := findUserByNormalizedEmail(c.Request.Context(), client, email)
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrUserNotFound):
-			existingUser = nil
-		case infraerrors.Code(err) >= http.StatusBadRequest && infraerrors.Code(err) < http.StatusInternalServerError:
-			response.ErrorFrom(c, err)
-			return
-		default:
-			response.ErrorFrom(c, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable"))
-			return
-		}
-	}
-	if existingUser != nil {
-		session, err = h.transitionPendingOAuthAccountToChoiceState(c, client, session, existingUser, email)
+	if email != "" {
+		existingUser, err := findUserByNormalizedEmail(c.Request.Context(), client, email)
 		if err != nil {
-			response.ErrorFrom(c, err)
+			switch {
+			case errors.Is(err, service.ErrUserNotFound):
+				existingUser = nil
+			case infraerrors.Code(err) >= http.StatusBadRequest && infraerrors.Code(err) < http.StatusInternalServerError:
+				response.ErrorFrom(c, err)
+				return
+			default:
+				response.ErrorFrom(c, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable"))
+				return
+			}
+		}
+		if existingUser != nil {
+			session, err = h.transitionPendingOAuthAccountToChoiceState(c, client, session, existingUser, email)
+			if err != nil {
+				response.ErrorFrom(c, err)
+				return
+			}
+			c.JSON(http.StatusOK, buildPendingOAuthSessionStatusPayload(session))
 			return
 		}
-		c.JSON(http.StatusOK, buildPendingOAuthSessionStatusPayload(session))
-		return
 	}
 	if err := h.ensureBackendModeAllowsNewUserLogin(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	tokenPair, user, err := h.authService.RegisterOAuthEmailAccount(
-		c.Request.Context(),
-		email,
-		req.Password,
-		strings.TrimSpace(req.VerifyCode),
-		strings.TrimSpace(req.InvitationCode),
-		strings.TrimSpace(session.ProviderType),
-	)
+	var tokenPair *service.TokenPair
+	var user *service.User
+	if isLinuxDoNoEmailSignup {
+		email = linuxDoSyntheticEmail(session.ProviderSubject)
+		tokenPair, user, err = h.authService.RegisterOAuthSyntheticEmailAccount(
+			c.Request.Context(),
+			email,
+			strings.TrimSpace(req.InvitationCode),
+			strings.TrimSpace(session.ProviderType),
+		)
+	} else {
+		tokenPair, user, err = h.authService.RegisterOAuthEmailAccount(
+			c.Request.Context(),
+			email,
+			req.Password,
+			strings.TrimSpace(req.VerifyCode),
+			strings.TrimSpace(req.InvitationCode),
+			strings.TrimSpace(session.ProviderType),
+		)
+	}
 	if err != nil {
 		if errors.Is(err, service.ErrEmailExists) {
 			existingUser, lookupErr := findUserByNormalizedEmail(c.Request.Context(), client, email)

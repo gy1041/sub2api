@@ -150,6 +150,7 @@
               :initial-email="pendingAccountEmail"
               :is-submitting="isSubmitting"
               :error-message="accountActionError"
+              allow-no-email-signup
               @submit="handleCreateAccount"
               @switch-to-bind="switchToBindLoginMode"
             />
@@ -673,22 +674,25 @@ async function handleContinueLogin() {
 
 async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
   accountActionError.value = ''
-  if (!payload.email || !payload.password) return
 
   isSubmitting.value = true
   try {
-    const { data } = await apiClient.post<LinuxDoPendingActionResponse>('/auth/oauth/pending/create-account', {
-      email: payload.email,
-      password: payload.password,
+    const requestPayload = {
+      ...(payload.email ? { email: payload.email } : {}),
+      ...(payload.password ? { password: payload.password } : {}),
       verify_code: payload.verifyCode || undefined,
       invitation_code: payload.invitationCode || undefined,
       ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
       ...serializeAdoptionDecision(currentAdoptionDecision())
-    })
+    }
+    const { data } = await apiClient.post<LinuxDoPendingActionResponse>(
+      '/auth/oauth/pending/create-account',
+      requestPayload
+    )
     await finalizePendingAccountResponse(data)
   } catch (e: unknown) {
     if (isCreateAccountRecoveryError(e)) {
-      switchToBindLoginMode(payload.email.trim())
+      switchToBindLoginMode(payload.email?.trim() || '')
       return
     }
     accountActionError.value = getRequestErrorMessage(e, t('auth.loginFailed'))

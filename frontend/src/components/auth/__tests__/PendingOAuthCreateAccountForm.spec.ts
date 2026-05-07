@@ -41,6 +41,7 @@ describe('PendingOAuthCreateAccountForm', () => {
     getPublicSettings.mockReset()
     showError.mockReset()
     getPublicSettings.mockResolvedValue({
+      email_verify_enabled: true,
       turnstile_enabled: false,
       turnstile_site_key: ''
     })
@@ -87,6 +88,7 @@ describe('PendingOAuthCreateAccountForm', () => {
 
   it('shows and emits invitation code when invitation-only signup is enabled', async () => {
     getPublicSettings.mockResolvedValue({
+      email_verify_enabled: true,
       invitation_code_enabled: true,
       turnstile_enabled: false,
       turnstile_site_key: ''
@@ -143,6 +145,77 @@ describe('PendingOAuthCreateAccountForm', () => {
     })
   })
 
+  it('hides local credential controls and omits email, password, and verify code when email verification is disabled', async () => {
+    getPublicSettings.mockResolvedValue({
+      email_verify_enabled: false,
+      invitation_code_enabled: false,
+      turnstile_enabled: true,
+      turnstile_site_key: 'site-key'
+    })
+
+    const wrapper = mount(PendingOAuthCreateAccountForm, {
+      props: {
+        providerName: 'LinuxDo',
+        testIdPrefix: 'linuxdo',
+        initialEmail: '',
+        isSubmitting: false,
+        allowNoEmailSignup: true
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="linuxdo-create-account-email"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-password"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-verify-code"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-send-code"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="turnstile-verify"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('auth.verificationCodeHint')
+
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('submit')).toEqual([[{}]])
+    expect(sendPendingOAuthVerifyCode).not.toHaveBeenCalled()
+  })
+
+  it('keeps local email and password controls for providers that do not allow no-email signup when email verification is disabled', async () => {
+    getPublicSettings.mockResolvedValue({
+      email_verify_enabled: false,
+      invitation_code_enabled: false,
+      turnstile_enabled: false,
+      turnstile_site_key: ''
+    })
+
+    const wrapper = mount(PendingOAuthCreateAccountForm, {
+      props: {
+        providerName: 'OIDC',
+        testIdPrefix: 'oidc',
+        initialEmail: '',
+        isSubmitting: false
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="oidc-create-account-email"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="oidc-create-account-password"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="oidc-create-account-verify-code"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="oidc-create-account-send-code"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="oidc-create-account-email"]').setValue('  user@example.com  ')
+    await wrapper.get('[data-testid="oidc-create-account-password"]').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('submit')).toEqual([
+      [
+        {
+          email: 'user@example.com',
+          password: 'secret-123'
+        }
+      ]
+    ])
+  })
+
   it('shows send-code failures via toast without rendering inline error text', async () => {
     sendPendingOAuthVerifyCode.mockRejectedValue(new Error('send failed'))
 
@@ -164,6 +237,7 @@ describe('PendingOAuthCreateAccountForm', () => {
 
   it('requires a turnstile token before sending a verify code when turnstile is enabled', async () => {
     getPublicSettings.mockResolvedValue({
+      email_verify_enabled: true,
       turnstile_enabled: true,
       turnstile_site_key: 'site-key'
     })

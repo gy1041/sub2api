@@ -229,6 +229,157 @@ func TestRegisterOAuthEmailAccountSetsNormalizedSignupSourceOnCreatedUser(t *tes
 	require.Equal(t, "oidc", userRepo.created[0].SignupSource)
 }
 
+func TestRegisterOAuthEmailAccountSkipsVerifyCodeWhenEmailVerificationDisabled(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 42}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{
+			SettingKeyRegistrationEnabled: "true",
+			SettingKeyEmailVerifyEnabled:  "false",
+		},
+		nil,
+	)
+
+	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+		context.Background(),
+		"fresh@example.com",
+		"secret-123",
+		"",
+		"",
+		"linuxdo",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, tokenPair)
+	require.NotNil(t, user)
+	require.Len(t, userRepo.created, 1)
+	require.Equal(t, "fresh@example.com", userRepo.created[0].Email)
+	require.Equal(t, "linuxdo", userRepo.created[0].SignupSource)
+}
+
+func TestRegisterOAuthEmailAccountRejectsReservedSyntheticEmail(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 42}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{
+			SettingKeyRegistrationEnabled: "true",
+			SettingKeyEmailVerifyEnabled:  "false",
+		},
+		nil,
+	)
+
+	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+		context.Background(),
+		"linuxdo-user"+LinuxDoConnectSyntheticEmailDomain,
+		"secret-123",
+		"",
+		"",
+		"linuxdo",
+	)
+
+	require.Nil(t, tokenPair)
+	require.Nil(t, user)
+	require.ErrorIs(t, err, ErrEmailReserved)
+	require.Empty(t, userRepo.created)
+}
+
+func TestRegisterOAuthSyntheticEmailAccountAllowsInternalReservedEmail(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 42}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{
+			SettingKeyRegistrationEnabled: "true",
+			SettingKeyEmailVerifyEnabled:  "false",
+		},
+		nil,
+	)
+
+	tokenPair, user, err := authService.RegisterOAuthSyntheticEmailAccount(
+		context.Background(),
+		"linuxdo-user"+LinuxDoConnectSyntheticEmailDomain,
+		"",
+		"linuxdo",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, tokenPair)
+	require.NotNil(t, user)
+	require.Len(t, userRepo.created, 1)
+	require.Equal(t, "linuxdo-user"+LinuxDoConnectSyntheticEmailDomain, userRepo.created[0].Email)
+	require.Equal(t, "linuxdo", userRepo.created[0].SignupSource)
+	require.NotEmpty(t, userRepo.created[0].PasswordHash)
+}
+
+func TestRegisterOAuthEmailAccountRequiresVerifyCodeWhenEmailVerificationEnabled(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 42}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{
+			SettingKeyRegistrationEnabled: "true",
+			SettingKeyEmailVerifyEnabled:  "true",
+		},
+		&emailCacheStub{},
+	)
+
+	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+		context.Background(),
+		"fresh@example.com",
+		"secret-123",
+		"",
+		"",
+		"linuxdo",
+	)
+
+	require.Nil(t, tokenPair)
+	require.Nil(t, user)
+	require.ErrorIs(t, err, ErrEmailVerifyRequired)
+	require.Empty(t, userRepo.created)
+}
+
+func TestRegisterOAuthEmailAccountRejectsInvalidVerifyCodeWhenEmailVerificationEnabled(t *testing.T) {
+	userRepo := &userRepoStub{nextID: 42}
+	emailCache := &emailCacheStub{
+		data: &VerificationCodeData{
+			Code:      "246810",
+			Attempts:  0,
+			CreatedAt: time.Now().UTC(),
+			ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
+		},
+	}
+	authService := newOAuthEmailFlowAuthService(
+		userRepo,
+		&redeemCodeRepoStub{},
+		&refreshTokenCacheStub{},
+		map[string]string{
+			SettingKeyRegistrationEnabled: "true",
+			SettingKeyEmailVerifyEnabled:  "true",
+		},
+		emailCache,
+	)
+
+	tokenPair, user, err := authService.RegisterOAuthEmailAccount(
+		context.Background(),
+		"fresh@example.com",
+		"secret-123",
+		"000000",
+		"",
+		"linuxdo",
+	)
+
+	require.Nil(t, tokenPair)
+	require.Nil(t, user)
+	require.ErrorIs(t, err, ErrInvalidVerifyCode)
+	require.Empty(t, userRepo.created)
+}
+
 func TestRegisterOAuthEmailAccountKeepsGitHubAndGoogleSignupSource(t *testing.T) {
 	tests := []struct {
 		name         string

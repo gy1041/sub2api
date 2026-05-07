@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for future implementation context"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend package layout and ownership conventions"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Database, repository, and migration conventions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Backend application error and response envelope conventions"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Backend logging and redaction conventions"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality and testing expectations"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for future implementation context"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Frontend source layout and feature placement conventions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue component contract, styling, and accessibility conventions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Composable naming, lifecycle, and data loading conventions"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Pinia, local state, server state, and persistence conventions"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend TypeScript and API contract conventions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend tooling, test, i18n, and review expectations"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Cross-cutting reuse guide for implementation decisions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer guide for backend/frontend API changes"}

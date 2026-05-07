@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend auth implementation guide index"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Auth handler/service layer ownership"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Maintain existing verification and pending auth error semantics"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend tests and quality gates"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse normal registration email verification toggle pattern"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Issue and local backend findings"}

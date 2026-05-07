@@ -1049,6 +1049,156 @@ func TestCreateOIDCOAuthAccountCreatesUserBindsIdentityAndConsumesSession(t *tes
 	require.NotNil(t, storedSession.ConsumedAt)
 }
 
+func TestCreatePendingOAuthAccountCreatesLinuxDoSyntheticUserWithoutEmailWhenEmailVerificationDisabled(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithOptions(t, false, false, nil)
+	ctx := context.Background()
+
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("create-account-email-verify-disabled-session-token").
+		SetIntent("login").
+		SetProviderType("linuxdo").
+		SetProviderKey("linuxdo").
+		SetProviderSubject("linuxdo-create-123").
+		SetBrowserSessionKey("create-account-email-verify-disabled-browser-session-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"username":               "linuxdo_user",
+			"suggested_display_name": "Fresh Linux.do User",
+		}).
+		SetRedirectTo("/profile").
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	body := bytes.NewBufferString(`{"adopt_display_name":false,"adopt_avatar":false}`)
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/create-account", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("create-account-email-verify-disabled-browser-session-key")})
+	ginCtx.Request = req
+
+	handler.CreatePendingOAuthAccount(ginCtx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.NotEmpty(t, payload["access_token"])
+	require.NotEmpty(t, payload["refresh_token"])
+	require.Equal(t, "Bearer", payload["token_type"])
+
+	createdUser, err := client.User.Query().Where(dbuser.EmailEQ("linuxdo-linuxdo-create-123@linuxdo-connect.invalid")).Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, service.StatusActive, createdUser.Status)
+	require.Equal(t, "linuxdo", createdUser.SignupSource)
+	require.NotEmpty(t, createdUser.PasswordHash)
+
+	identity, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("linuxdo"),
+			authidentity.ProviderKeyEQ("linuxdo"),
+			authidentity.ProviderSubjectEQ("linuxdo-create-123"),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, createdUser.ID, identity.UserID)
+
+	storedSession, err := client.PendingAuthSession.Get(ctx, session.ID)
+	require.NoError(t, err)
+	require.NotNil(t, storedSession.ConsumedAt)
+}
+
+func TestCreatePendingOAuthAccountRejectsUserSubmittedSyntheticEmailWhenEmailVerificationDisabled(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithOptions(t, false, false, nil)
+	ctx := context.Background()
+
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("create-account-reserved-email-session-token").
+		SetIntent("login").
+		SetProviderType("linuxdo").
+		SetProviderKey("linuxdo").
+		SetProviderSubject("linuxdo-reserved-email-123").
+		SetBrowserSessionKey("create-account-reserved-email-browser-session-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"username": "linuxdo_user",
+		}).
+		SetRedirectTo("/profile").
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	body := bytes.NewBufferString(`{"email":"linuxdo-manual@linuxdo-connect.invalid","password":"secret-123"}`)
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/create-account", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("create-account-reserved-email-browser-session-key")})
+	ginCtx.Request = req
+
+	handler.CreatePendingOAuthAccount(ginCtx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, "EMAIL_RESERVED", payload["reason"])
+
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("linuxdo-manual@linuxdo-connect.invalid")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, userCount)
+
+	storedSession, err := client.PendingAuthSession.Get(ctx, session.ID)
+	require.NoError(t, err)
+	require.Nil(t, storedSession.ConsumedAt)
+}
+
+func TestCreateOIDCOAuthAccountRequiresVerifyCodeWhenEmailVerificationEnabled(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithOptions(t, false, true, &oauthPendingFlowEmailCacheStub{})
+	ctx := context.Background()
+
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("create-account-email-verify-enabled-session-token").
+		SetIntent("login").
+		SetProviderType("oidc").
+		SetProviderKey("https://issuer.example").
+		SetProviderSubject("oidc-create-missing-code-123").
+		SetBrowserSessionKey("create-account-email-verify-enabled-browser-session-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"username": "oidc_user",
+		}).
+		SetRedirectTo("/profile").
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	body := bytes.NewBufferString(`{"email":"fresh@example.com","password":"secret-123"}`)
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/oidc/create-account", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("create-account-email-verify-enabled-browser-session-key")})
+	ginCtx.Request = req
+
+	handler.CreateOIDCOAuthAccount(ginCtx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, "EMAIL_VERIFY_REQUIRED", payload["reason"])
+
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("fresh@example.com")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, userCount)
+
+	storedSession, err := client.PendingAuthSession.Get(ctx, session.ID)
+	require.NoError(t, err)
+	require.Nil(t, storedSession.ConsumedAt)
+}
+
 func TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState(t *testing.T) {
 	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
 	ctx := context.Background()

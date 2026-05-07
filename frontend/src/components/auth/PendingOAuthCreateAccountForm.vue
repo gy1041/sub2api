@@ -1,6 +1,7 @@
 <template>
   <form class="space-y-3" @submit.prevent="handleSubmit">
     <input
+      v-if="requiresLocalCredentials"
       v-model="email"
       :data-testid="`${testIdPrefix}-create-account-email`"
       type="email"
@@ -9,6 +10,7 @@
       :disabled="isSubmitting || isSendingCode"
     />
     <input
+      v-if="requiresLocalCredentials"
       v-model="password"
       :data-testid="`${testIdPrefix}-create-account-password`"
       type="password"
@@ -16,7 +18,7 @@
       :placeholder="t('auth.passwordPlaceholder')"
       :disabled="isSubmitting"
     />
-    <div v-if="turnstileEnabled && turnstileSiteKey" class="space-y-2">
+    <div v-if="requiresVerificationCode && turnstileEnabled && turnstileSiteKey" class="space-y-2">
       <TurnstileWidget
         ref="turnstileRef"
         :site-key="turnstileSiteKey"
@@ -25,17 +27,17 @@
         @error="onTurnstileError"
       />
     </div>
-    <div class="flex gap-3">
-    <input
-      v-model="verifyCode"
-      :data-testid="`${testIdPrefix}-create-account-verify-code`"
-      type="text"
+    <div v-if="requiresVerificationCode" class="flex gap-3">
+      <input
+        v-model="verifyCode"
+        :data-testid="`${testIdPrefix}-create-account-verify-code`"
+        type="text"
         inputmode="numeric"
-      maxlength="6"
-      class="input min-w-0 flex-1"
-      placeholder="123456"
-      :disabled="isSubmitting"
-    />
+        maxlength="6"
+        class="input min-w-0 flex-1"
+        placeholder="123456"
+        :disabled="isSubmitting"
+      />
       <button
         :data-testid="`${testIdPrefix}-create-account-send-code`"
         type="button"
@@ -52,10 +54,10 @@
         }}
       </button>
     </div>
-    <p v-if="sendCodeSuccess" class="text-sm text-green-600 dark:text-green-400">
+    <p v-if="requiresVerificationCode && sendCodeSuccess" class="text-sm text-green-600 dark:text-green-400">
       {{ t('auth.codeSentSuccess') }}
     </p>
-    <p v-else class="text-xs text-gray-500 dark:text-dark-400">
+    <p v-else-if="requiresVerificationCode" class="text-xs text-gray-500 dark:text-dark-400">
       {{ t('auth.verificationCodeHint') }}
     </p>
     <input
@@ -71,7 +73,11 @@
       :data-testid="`${testIdPrefix}-create-account-submit`"
       type="button"
       class="btn btn-primary w-full"
-      :disabled="isSubmitting || !email.trim() || password.length < 6 || (invitationCodeEnabled && !invitationCode.trim())"
+      :disabled="
+        isSubmitting ||
+        (requiresLocalCredentials && (!email.trim() || password.length < 6)) ||
+        (invitationCodeEnabled && !invitationCode.trim())
+      "
       @click="handleSubmit"
     >
       {{ isSubmitting ? t('common.processing') : t('auth.createAccount') }}
@@ -88,25 +94,28 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { getPublicSettings, sendPendingOAuthVerifyCode } from '@/api/auth'
 import { useAppStore } from '@/stores'
 
 export type PendingOAuthCreateAccountPayload = {
-  email: string
-  password: string
-  verifyCode: string
+  email?: string
+  password?: string
+  verifyCode?: string
   invitationCode?: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   initialEmail: string
   testIdPrefix: string
   isSubmitting: boolean
   errorMessage?: string
-}>()
+  allowNoEmailSignup?: boolean
+}>(), {
+  allowNoEmailSignup: false
+})
 
 const emit = defineEmits<{
   submit: [payload: PendingOAuthCreateAccountPayload]
@@ -125,10 +134,13 @@ const sendCodeError = ref('')
 const sendCodeSuccess = ref(false)
 const countdown = ref(0)
 const invitationCodeEnabled = ref(false)
+const emailVerifyEnabled = ref(true)
 const turnstileEnabled = ref(false)
 const turnstileSiteKey = ref('')
 const turnstileToken = ref('')
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
+const requiresLocalCredentials = computed(() => emailVerifyEnabled.value || !props.allowNoEmailSignup)
+const requiresVerificationCode = computed(() => emailVerifyEnabled.value)
 
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -207,6 +219,10 @@ function onTurnstileError() {
 }
 
 async function handleSendCode() {
+  if (!requiresVerificationCode.value) {
+    return
+  }
+
   const trimmedEmail = email.value.trim()
   if (!trimmedEmail) {
     return
@@ -240,16 +256,24 @@ async function handleSendCode() {
 
 function handleSubmit() {
   const trimmedEmail = email.value.trim()
-  if (!trimmedEmail || password.value.length < 6) {
+  if (requiresLocalCredentials.value && (!trimmedEmail || password.value.length < 6)) {
     return
   }
 
-  emit('submit', {
-    email: trimmedEmail,
-    password: password.value,
-    verifyCode: verifyCode.value.trim(),
-    invitationCode: invitationCode.value.trim() || undefined
-  })
+  const payload: PendingOAuthCreateAccountPayload = {}
+  if (requiresLocalCredentials.value) {
+    payload.email = trimmedEmail
+    payload.password = password.value
+  }
+  const trimmedInvitationCode = invitationCode.value.trim()
+  if (trimmedInvitationCode) {
+    payload.invitationCode = trimmedInvitationCode
+  }
+  if (requiresVerificationCode.value) {
+    payload.verifyCode = verifyCode.value.trim()
+  }
+
+  emit('submit', payload)
 }
 
 function emitSwitchToBind() {
@@ -260,10 +284,12 @@ onMounted(async () => {
   try {
     const settings = await getPublicSettings()
     invitationCodeEnabled.value = settings.invitation_code_enabled === true
+    emailVerifyEnabled.value = settings.email_verify_enabled !== false
     turnstileEnabled.value = settings.turnstile_enabled === true
     turnstileSiteKey.value = settings.turnstile_site_key || ''
   } catch {
     invitationCodeEnabled.value = false
+    emailVerifyEnabled.value = true
     turnstileEnabled.value = false
     turnstileSiteKey.value = ''
   }

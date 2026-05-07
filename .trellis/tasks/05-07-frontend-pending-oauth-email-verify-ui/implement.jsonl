@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend implementation guide index"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Existing auth component/test placement"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue SFC behavior and accessibility for account form controls"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Type-safe public settings and submit payload behavior"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Vitest and frontend quality gates"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Keep frontend setting behavior aligned with backend enforcement"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Issue and local frontend findings"}

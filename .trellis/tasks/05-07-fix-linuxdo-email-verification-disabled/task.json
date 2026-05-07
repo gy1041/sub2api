@@ -1,0 +1,29 @@
+{
+  "id": "fix-linuxdo-email-verification-disabled",
+  "name": "fix-linuxdo-email-verification-disabled",
+  "title": "fix linuxdo login requiring email verification when disabled",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "nekomata-engineer",
+  "assignee": "nekomata-engineer",
+  "createdAt": "2026-05-07",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-07-backend-pending-oauth-email-verify-switch",
+    "05-07-frontend-pending-oauth-email-verify-ui"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

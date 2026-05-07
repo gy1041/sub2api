@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Review frontend guide index"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review Vue component behavior and accessibility"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Review settings and submit payload typing"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Review frontend tests and quality gates"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify frontend remains consistent with backend setting semantics"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Confirm frontend fix addresses issue #1956"}

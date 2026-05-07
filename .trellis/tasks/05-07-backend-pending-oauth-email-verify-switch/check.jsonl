@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Review backend auth implementation guide index"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Review error compatibility"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review backend tests and quality gates"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check consistency with normal registration toggle behavior"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Confirm backend fix addresses issue #1956"}

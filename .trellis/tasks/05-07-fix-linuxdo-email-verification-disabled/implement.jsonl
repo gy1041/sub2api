@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend auth and pending OAuth implementation must follow backend guide index"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Handler/service ownership and placement for auth flow changes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Preserve ApplicationError response semantics for verification and pending auth errors"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend test and quality gates for auth changes"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend pending OAuth UI implementation must follow frontend guide index"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue SFC UI changes for pending OAuth create account form"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Type-safe payload and settings handling for create account form"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend tests and quality gates"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Issue spans backend setting semantics and frontend form behavior"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Issue details, regression clues, and local code findings"}

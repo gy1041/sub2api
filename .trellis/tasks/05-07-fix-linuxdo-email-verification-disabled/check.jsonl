@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Review backend auth flow against guide index"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify error compatibility for verification disabled/enabled paths"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify backend tests and quality expectations"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Review frontend pending OAuth UI against guide index"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify Vue component behavior and accessibility"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify settings and submit payload types"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify frontend test coverage and quality gates"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review backend/frontend behavior consistency"}
+{"file": ".trellis/tasks/05-07-fix-linuxdo-email-verification-disabled/research/issue-1956-context.md", "reason": "Confirm implementation resolves issue #1956 scenario"}

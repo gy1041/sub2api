@@ -13,6 +13,17 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+type oauthEmailAccountRegistrationInput struct {
+	Email                   string
+	Password                string
+	VerifyCode              string
+	InvitationCode          string
+	SignupSource            string
+	AllowReservedEmail      bool
+	ValidateLocalEmailRules bool
+	GeneratePassword        bool
+}
+
 func normalizeOAuthSignupSource(signupSource string) string {
 	signupSource = strings.TrimSpace(strings.ToLower(signupSource))
 	switch signupSource {
@@ -97,7 +108,7 @@ func (s *AuthService) VerifyOAuthEmailCode(ctx context.Context, email, verifyCod
 }
 
 // RegisterOAuthEmailAccount creates a local account from a third-party first
-// login after the user has verified a local email address.
+// login. Local email verification follows the global registration setting.
 func (s *AuthService) RegisterOAuthEmailAccount(
 	ctx context.Context,
 	email string,
@@ -106,6 +117,39 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	invitationCode string,
 	signupSource string,
 ) (*TokenPair, *User, error) {
+	return s.registerOAuthEmailAccount(ctx, oauthEmailAccountRegistrationInput{
+		Email:                   email,
+		Password:                password,
+		VerifyCode:              verifyCode,
+		InvitationCode:          invitationCode,
+		SignupSource:            signupSource,
+		ValidateLocalEmailRules: true,
+	})
+}
+
+// RegisterOAuthSyntheticEmailAccount creates an OAuth-only local account using
+// a backend-owned synthetic email address. It intentionally bypasses local
+// user-entered email restrictions while preserving registration and invitation
+// gates.
+func (s *AuthService) RegisterOAuthSyntheticEmailAccount(
+	ctx context.Context,
+	email string,
+	invitationCode string,
+	signupSource string,
+) (*TokenPair, *User, error) {
+	return s.registerOAuthEmailAccount(ctx, oauthEmailAccountRegistrationInput{
+		Email:              email,
+		InvitationCode:     invitationCode,
+		SignupSource:       signupSource,
+		AllowReservedEmail: true,
+		GeneratePassword:   true,
+	})
+}
+
+func (s *AuthService) registerOAuthEmailAccount(
+	ctx context.Context,
+	input oauthEmailAccountRegistrationInput,
+) (*TokenPair, *User, error) {
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
 	}
@@ -113,19 +157,44 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, ErrRegDisabled
 	}
 
-	email = strings.TrimSpace(strings.ToLower(email))
-	if isReservedEmail(email) {
+	email := strings.TrimSpace(strings.ToLower(input.Email))
+	if email == "" || len(email) > 255 {
+		return nil, nil, ErrEmailVerifyRequired
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return nil, nil, ErrEmailVerifyRequired
+	}
+	if !input.AllowReservedEmail && isReservedEmail(email) {
 		return nil, nil, ErrEmailReserved
 	}
-	if err := s.validateRegistrationEmailPolicy(ctx, email); err != nil {
-		return nil, nil, err
+	if input.ValidateLocalEmailRules {
+		if err := s.validateRegistrationEmailPolicy(ctx, email); err != nil {
+			return nil, nil, err
+		}
 	}
-	if err := s.VerifyOAuthEmailCode(ctx, email, verifyCode); err != nil {
+	if s.IsEmailVerifyEnabled(ctx) && !input.GeneratePassword {
+		if err := s.VerifyOAuthEmailCode(ctx, email, input.VerifyCode); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if _, err := s.validateOAuthRegistrationInvitation(ctx, input.InvitationCode); err != nil {
 		return nil, nil, err
 	}
 
-	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
-		return nil, nil, err
+	password := input.Password
+	if input.GeneratePassword {
+		generatedPassword, err := randomHexString(32)
+		if err != nil {
+			return nil, nil, ErrServiceUnavailable
+		}
+		password = generatedPassword
+	} else if strings.TrimSpace(password) == "" {
+		return nil, nil, infraerrors.BadRequest("PASSWORD_REQUIRED", "password is required")
+	}
+	hashedPassword, err := s.HashPassword(password)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
 
 	existsEmail, err := s.userRepo.ExistsByEmail(ctx, email)
@@ -136,12 +205,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, ErrEmailExists
 	}
 
-	hashedPassword, err := s.HashPassword(password)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash password: %w", err)
-	}
-
-	signupSource = normalizeOAuthSignupSource(signupSource)
+	signupSource := normalizeOAuthSignupSource(input.SignupSource)
 	grantPlan := s.resolveSignupGrantPlan(ctx, signupSource)
 
 	user := &User{

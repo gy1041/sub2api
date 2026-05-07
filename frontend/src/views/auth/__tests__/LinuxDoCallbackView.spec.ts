@@ -483,6 +483,7 @@ describe('LinuxDoCallbackView', () => {
 
   it('collects email, password, and verify code for pending oauth account creation and submits adoption decisions', async () => {
     getPublicSettings.mockResolvedValue({
+      email_verify_enabled: true,
       invitation_code_enabled: true,
       turnstile_enabled: false,
       turnstile_site_key: ''
@@ -532,6 +533,58 @@ describe('LinuxDoCallbackView', () => {
       password: 'secret-123',
       verify_code: '246810',
       invitation_code: 'INVITE123',
+      adopt_display_name: true,
+      adopt_avatar: false
+    })
+    expect(setToken).toHaveBeenCalledWith('new-access-token')
+    expect(replace).toHaveBeenCalledWith('/welcome')
+  })
+
+  it('omits email, password, and verify code when email verification is disabled', async () => {
+    getPublicSettings.mockResolvedValue({
+      email_verify_enabled: false,
+      invitation_code_enabled: false,
+      turnstile_enabled: true,
+      turnstile_site_key: 'site-key'
+    })
+    exchangePendingOAuthCompletion.mockResolvedValue({
+      error: 'email_required',
+      redirect: '/welcome',
+      suggested_display_name: 'LinuxDo User'
+    })
+    apiClientPost.mockResolvedValue({
+      data: {
+        access_token: 'new-access-token',
+        refresh_token: 'new-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer'
+      }
+    })
+    setToken.mockResolvedValue({})
+
+    const wrapper = mount(LinuxDoCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="linuxdo-create-account-email"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-password"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-verify-code"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="linuxdo-create-account-send-code"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="linuxdo-create-account-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(apiClientPost).toHaveBeenCalledWith('/auth/oauth/pending/create-account', {
+      verify_code: undefined,
+      invitation_code: undefined,
       adopt_display_name: true,
       adopt_avatar: false
     })
